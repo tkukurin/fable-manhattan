@@ -1,6 +1,11 @@
 
 # manhattan analysis code
 
+```bash
+uv run fetch_manhattan.py
+uv run analyze_manhattan.py
+```
+
 ![fable manhattan screenshot](./fable-manhattan.jpg)
 
 
