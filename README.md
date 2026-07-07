@@ -19,6 +19,8 @@ outputs seem _similar_ based on [web].
 
 the (only slightly) more rigorous code-analysis shows minor differences.
 
+![sim heatmap](./out/similarity_heatmap.png)
+
 <details>
 <summary><b>Click to expand prompt</b></summary>
 
