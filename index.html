@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Manhattan × 5 — Fable 5 reasoning levels</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #0b0d10; color: #cfd3d8;
+    font: 12px/1.4 -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif; }
+
+  #bar { height: 34px; display: flex; align-items: center; gap: 16px; padding: 0 12px;
+    background: #111418; border-bottom: 1px solid #1e2329; user-select: none; }
+  #bar .title { font-weight: 600; color: #e8eaed; }
+  #bar label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: #9aa1a9; }
+  #bar button { background: #1c2127; color: #cfd3d8; border: 1px solid #2a313a; border-radius: 5px;
+    padding: 3px 10px; font: inherit; cursor: pointer; }
+  #bar button:hover { background: #252b33; }
+  #bar .hint { margin-left: auto; color: #5b636d; }
+
+  #grid { height: calc(100% - 34px); position: relative; background: #0b0d10; }
+  .panel { position: absolute; background: #000; overflow: hidden;
+    transition: top .38s cubic-bezier(.4,0,.2,1), left .38s cubic-bezier(.4,0,.2,1),
+                width .38s cubic-bezier(.4,0,.2,1), height .38s cubic-bezier(.4,0,.2,1); }
+
+  .panel iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+
+  .tag { position: absolute; top: 8px; left: 10px; z-index: 3; cursor: pointer; user-select: none;
+    background: rgba(10, 12, 15, 0.72); border: 1px solid rgba(255,255,255,0.12); border-radius: 7px;
+    padding: 4px 14px; font-size: 22px; font-weight: 700; letter-spacing: 1px; color: #f0f2f4;
+    transition: border-color .2s, font-size .38s cubic-bezier(.4,0,.2,1), padding .38s; }
+  .tag:hover { border-color: rgba(255,255,255,0.4); }
+  .panel.mini .tag { font-size: 13px; padding: 2px 9px; border-radius: 5px; letter-spacing: .5px; }
+  .tag .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #d3a13c;
+    margin-right: 9px; vertical-align: 3px; transition: background .3s; }
+  .panel.mini .tag .dot { width: 7px; height: 7px; margin-right: 6px; vertical-align: 1px; }
+  .tag .dot.ready { background: #4cc46a; }
+  .panel.lead .tag { border-color: rgba(120, 180, 255, 0.65); }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <span class="title">Manhattan × Fable 5</span>
+    <label><input type="checkbox" id="sync" checked> Sync cameras</label>
+    <button id="reload">Reload all</button>
+    <button id="hud">Controls</button>
+    <span class="hint">any panel leads, others mirror · click title / dbl-click / keys 1–5 to focus · Esc back to grid</span>
+  </div>
+  <div id="grid"></div>
+
+<script>
+const RUNS = [
+  { folder: 'run-a', label: 'LOW' },
+  { folder: 'run-b', label: 'MEDIUM' },
+  { folder: 'run-c', label: 'HIGH' },
+  { folder: 'run-d', label: 'XHIGH' },
+  { folder: 'run-e', label: 'MAX' },
+];
+
+const grid = document.getElementById('grid');
+const frames = [], panels = [], dots = [];
+// Per-scene: hook = {camera, controls}; cal = calibrated hero pose {t0, r0, th0, ph0}
+const hooks = [], cals = [];
+let leader = 0;
+
+RUNS.forEach((run, i) => {
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  panel.innerHTML = `
+    <div class="tag"><span class="dot" id="dot${i}"></span>${run.label}</div>
+    <iframe src="${run.folder}/index.html" loading="eager"></iframe>`;
+  grid.appendChild(panel);
+  panels.push(panel);
+  frames.push(panel.querySelector('iframe'));
+  dots.push(panel.querySelector('.dot'));
+  hooks.push(null); cals.push(null);
+  panel.querySelector('.tag').addEventListener('click', () => toggleFocus(i));
+});
+
+// ---- layout: normal 3+2 grid, or one focused panel with the rest in a side column ----
+let focused = -1;
+const GAP = 2;
+
+function layout() {
+  const W = grid.clientWidth, H = grid.clientHeight;
+  if (focused < 0) {
+    const w = (W - 2 * GAP) / 3, h = (H - GAP) / 2;
+    const x0 = (W - 2 * w - GAP) / 2; // center the bottom pair
+    const pos = [
+      [0, 0], [w + GAP, 0], [2 * (w + GAP), 0],
+      [x0, h + GAP], [x0 + w + GAP, h + GAP],
+    ];
+    panels.forEach((p, i) => {
+      p.classList.remove('mini');
+      Object.assign(p.style, { left: pos[i][0] + 'px', top: pos[i][1] + 'px',
+        width: w + 'px', height: h + 'px' });
+    });
+  } else {
+    const side = Math.max(200, Math.round(W * 0.2));
+    const hm = (H - 3 * GAP) / 4;
+    let j = 0;
+    panels.forEach((p, i) => {
+      if (i === focused) {
+        p.classList.remove('mini');
+        Object.assign(p.style, { left: '0px', top: '0px',
+          width: (W - side - GAP) + 'px', height: H + 'px' });
+      } else {
+        p.classList.add('mini');
+        Object.assign(p.style, { left: (W - side) + 'px', top: (j * (hm + GAP)) + 'px',
+          width: side + 'px', height: hm + 'px' });
+        j++;
+      }
+    });
+  }
+}
+
+function toggleFocus(i) {
+  focused = (focused === i) ? -1 : i;
+  if (focused >= 0) setLeader(i);
+  layout();
+}
+
+window.addEventListener('resize', layout);
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && focused >= 0) { focused = -1; layout(); }
+  const n = '12345'.indexOf(e.key);
+  if (n >= 0) toggleFocus(n);
+});
+layout();
+
+function spherical(off) {
+  const r = Math.hypot(off.x, off.y, off.z) || 1e-6;
+  return { r, th: Math.atan2(off.x, off.z), ph: Math.acos(Math.min(1, Math.max(-1, off.y / r))) };
+}
+
+function calibrate(i) {
+  const h = hooks[i];
+  const t = h.controls.target, p = h.camera.position;
+  const s = spherical({ x: p.x - t.x, y: p.y - t.y, z: p.z - t.z });
+  cals[i] = { t0: { x: t.x, y: t.y, z: t.z }, r0: s.r, th0: s.th, ph0: s.ph };
+}
+
+function setLeader(i) {
+  leader = i;
+  panels.forEach((p, j) => p.classList.toggle('lead', j === i));
+}
+
+// Discover each scene's hook, calibrate its hero pose, and watch for interaction.
+function watchScene(i) {
+  const poll = setInterval(() => {
+    try {
+      const win = frames[i].contentWindow;
+      const h = win && win.__viewerHook;
+      if (h && h.camera && h.controls && win.document.querySelector('canvas')) {
+        clearInterval(poll);
+        hooks[i] = h;
+        // small delay so any first-frame setup has settled before we snapshot the hero pose
+        setTimeout(() => { calibrate(i); dots[i].classList.add('ready'); }, 600);
+        win.document.addEventListener('pointerdown', () => setLeader(i), true);
+        win.document.addEventListener('wheel', () => setLeader(i), { capture: true, passive: true });
+        win.document.addEventListener('dblclick', () => toggleFocus(i), true);
+        win.document.addEventListener('keydown', e => {
+          if (e.key === 'Escape' && focused >= 0) { focused = -1; layout(); }
+          const n = '12345'.indexOf(e.key);
+          if (n >= 0) toggleFocus(n);
+        }, true);
+      }
+    } catch (e) { /* frame not ready yet */ }
+  }, 250);
+}
+frames.forEach((f, i) => {
+  watchScene(i);
+  f.addEventListener('load', () => {
+    hooks[i] = null; cals[i] = null; dots[i].classList.remove('ready');
+    watchScene(i);
+  });
+});
+setLeader(0);
+
+// Every frame: express the leader's camera as deltas from ITS calibrated hero pose,
+// then re-apply those deltas to each follower through that follower's own scale
+// (r0 ratio) and island orientation (azimuth offset). When the leader sits at its
+// hero pose, every follower sits at its own hero pose.
+const syncBox = document.getElementById('sync');
+function mirror() {
+  requestAnimationFrame(mirror);
+  if (!syncBox.checked) return;
+  const m = hooks[leader], cm = cals[leader];
+  if (!m || !cm) return;
+  let mt, mp;
+  try { mt = m.controls.target; mp = m.camera.position; } catch (e) { return; }
+  const ms = spherical({ x: mp.x - mt.x, y: mp.y - mt.y, z: mp.z - mt.z });
+  const k = ms.r / cm.r0;            // zoom factor relative to hero
+  const dth = ms.th - cm.th0;        // orbit deltas relative to hero
+  const dph = ms.ph - cm.ph0;
+  const D = { x: mt.x - cm.t0.x, y: mt.y - cm.t0.y, z: mt.z - cm.t0.z }; // pan since hero
+
+  for (let i = 0; i < hooks.length; i++) {
+    if (i === leader) continue;
+    const h = hooks[i], c = cals[i];
+    if (!h || !c) continue;
+    try {
+      const s = c.r0 / cm.r0;              // world-scale ratio between the two scenes
+      const rot = c.th0 - cm.th0;          // how this island is rotated vs the leader's
+      const cosR = Math.cos(rot), sinR = Math.sin(rot);
+      const dx = (D.x * cosR + D.z * sinR) * s;
+      const dz = (D.z * cosR - D.x * sinR) * s;
+      const tx = c.t0.x + dx, ty = c.t0.y + D.y * s, tz = c.t0.z + dz;
+
+      const ctl = h.controls;
+      let r = c.r0 * k;
+      if (isFinite(ctl.minDistance)) r = Math.max(r, ctl.minDistance);
+      if (isFinite(ctl.maxDistance)) r = Math.min(r, ctl.maxDistance);
+      const th = c.th0 + dth;
+      let ph = c.ph0 + dph;
+      const phMin = Math.max(0.02, ctl.minPolarAngle || 0);
+      const phMax = Math.min(Math.PI - 0.02, ctl.maxPolarAngle || Math.PI);
+      ph = Math.min(phMax, Math.max(phMin, ph));
+
+      ctl.target.set(tx, ty, tz);
+      h.camera.position.set(
+        tx + r * Math.sin(ph) * Math.sin(th),
+        ty + r * Math.cos(ph),
+        tz + r * Math.sin(ph) * Math.cos(th));
+      h.camera.lookAt(tx, ty, tz);
+    } catch (e) { /* keep the rest in sync */ }
+  }
+}
+mirror();
+
+document.getElementById('reload').addEventListener('click', () =>
+  frames.forEach(f => { f.src = f.src; }));
+
+// Toggle every scene's control HUD together (scenes boot with body.hud-off).
+document.getElementById('hud').addEventListener('click', () => {
+  frames.forEach(f => {
+    try { f.contentDocument.body.classList.toggle('hud-off'); } catch (e) {}
+  });
+});
+</script>
+</body>
+</html>
