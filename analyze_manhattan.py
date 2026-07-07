@@ -38,46 +38,24 @@ class File: src: Dir; path: Path; text: str
 @dataclass
 class AnalyzedFile: analyzer: str; tgt: File; metrics: dict[str, float]
 
-# HTML Parser to extract JS blocks
-class SCRIPTExtractor(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.in_script = False
-        self.current_type = None
-        self.scripts = []
-        self.current_data = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag.lower() == "script":
-            self.in_script = True
-            attrs_dict = dict(attrs)
-            self.current_type = attrs_dict.get("type", "").lower()
-            self.current_data = []
-
-    def handle_data(self, data):
-        if self.in_script:
-            self.current_data.append(data)
-
-    def handle_endtag(self, tag):
-        if tag.lower() == "script":
-            if self.in_script and self.current_type != "importmap":
-                self.scripts.append("".join(self.current_data))
-            self.in_script = False
-            self.current_type = None
+class Extractor(HTMLParser):  # extract `tags` from html file
+    def __init__(self, tags: list): super().__init__(); self.tags, self.res, self.on, self.t, self.d = tags, [], 0, "", []
+    def handle_starttag(self, t, a):
+        if t in self.tags: self.on, self.t, self.d = 1, dict(a).get("type", "").lower(), []
+    def handle_data(self, d): self.on and self.d.append(d)
+    def handle_endtag(self, t):
+        if t in self.tags: self.t == "importmap" or self.res.append("".join(self.d)); self.on = 0
 
 def extract_js_from_file(file: File) -> str:
     """Extracts raw JS from a JS file or JS script blocks from an HTML file."""
-    if file.path.suffix == ".js":
-        return file.text
-    extractor = SCRIPTExtractor()
-    extractor.feed(file.text)
-    return "\n".join(extractor.scripts)
+    if file.path.suffix == ".js": return file.text
+    extractor = Extractor(["script"]); extractor.feed(file.text)
+    return "\n".join(extractor.res)
 
 def analyze_highlevel(file: File) -> AnalyzedFile:
     """high-level text metrics: length, number of comments, number of LOCs."""
     js_code = extract_js_from_file(file)
-    # Regex to match strings, regexes, and comments without overlapping.
-    pattern = re.compile(
+    pattern = re.compile(  # match strings, regexes, comments wout overlapping.
         r'(\"(?:[^\"\\\\]|\\\\.)*\")|'
         r'(\'(?:[^\'\\\\]|\\\\.)*\')|'
         r'(\`(?:[^\`\\\\]|\\\\.)*\`)|'
@@ -145,40 +123,30 @@ def analyze_linter(file: File) -> AnalyzedFile:
 
 def visualize_similarity(dirs: list[Dir]) -> plt.Figure:
     """Computes pairwise trigram Jaccard similarities and plots a heatmap."""
-    runs = [d.src.name for d in dirs]
+    runs = sorted(d.src.name for d in dirs)
     n = len(dirs)
     matrix = np.ones((n, n))
-    
-    # Pre-extract full JS codebase per folder
     js_by_dir = {}
     for d in dirs:
-        # Concatenate JS from all files in the directory
         js_texts = []
         # Sort files to ensure deterministic concatenation order
-        sorted_files = sorted(d.files, key=lambda f: f.path)
-        for f in sorted_files:
+        for f in sorted(d.files, key=lambda f: f.path):
             js_texts.append(extract_js_from_file(f))
         js_by_dir[d.src.name] = "\n".join(js_texts)
-        
     print("\nCalculating pairwise trigram Jaccard similarities...")
     for i in range(n):
         for j in range(i + 1, n):
             run_i, run_j = runs[i], runs[j]
-            
             def get_trigrams(text: str) -> set[str]:
                 clean = "".join(text.split())
                 return {clean[idx:idx+3] for idx in range(len(clean) - 2)}
-                
             t1 = get_trigrams(js_by_dir[run_i])
             t2 = get_trigrams(js_by_dir[run_j])
             ratio = len(t1 & t2) / len(t1 | t2) if (t1 or t2) else 0.0
-            
             matrix[i, j] = ratio
             matrix[j, i] = ratio
             print(f"  {run_i} vs {run_j}: {ratio:.4f}")
-            
     df = pd.DataFrame(matrix, index=runs, columns=runs)
-    
     fig, ax = plt.subplots(figsize=(8, 6))
     sns.heatmap(df, annot=True, cmap="YlGnBu", fmt=".4f", cbar_kws={'label': 'Similarity Ratio'}, ax=ax)
     ax.set_title("Pairwise Code Similarity Heatmap")
@@ -197,21 +165,16 @@ def visualize_highlevel(analyzed_files: list[AnalyzedFile]) -> plt.Figure:
             "comments": af.metrics["comments"],
             "loc": af.metrics["loc"]
         })
-        
     df = pd.DataFrame(data).groupby("run").sum().reset_index()
-    # Sort by run name to ensure run-a, run-b, run-c, run-d, run-e ordering
     df = df.sort_values("run")
-    
-    # Melt for seaborn grouped plot
-    df_melt = df.melt(id_vars="run", value_vars=["length", "comments", "loc"], 
-                      var_name="metric", value_name="count")
-                      
+    df_melt = df.melt(  # for seaborn grouped plot
+        id_vars="run", value_vars=["length", "comments", "loc"],
+        var_name="metric", value_name="count")
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(data=df_melt, x="run", y="count", hue="metric", ax=ax, palette="muted")
     ax.set_yscale("log")  # Log scale since length and comments/LOC are orders of magnitude apart
     ax.set_title("High-level Code Metrics by Run (Log Scale)")
-    ax.set_ylabel("Count")
-    ax.set_xlabel("Fable Level Run")
+    ax.set_ylabel("Count"); ax.set_xlabel("Fable Level Run")
     plt.tight_layout()
     return fig
 
@@ -226,13 +189,11 @@ def visualize_linter(analyzed_files: list[AnalyzedFile]) -> plt.Figure:
             "warnings": af.metrics["warnings"],
             "inconsistencies": af.metrics["inconsistencies"]
         })
-        
     df = pd.DataFrame(data).groupby("run").sum().reset_index()
     df = df.sort_values("run")
-    
-    df_melt = df.melt(id_vars="run", value_vars=["errors", "warnings", "inconsistencies"], 
-                      var_name="metric", value_name="count")
-                      
+    df_melt = df.melt(
+        id_vars="run", value_vars=["errors", "warnings", "inconsistencies"],
+        var_name="metric", value_name="count")
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(data=df_melt, x="run", y="count", hue="metric", ax=ax, palette="deep")
     ax.set_title("Linter Metrics by Run")
@@ -245,8 +206,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ind", default=".")
     parser.add_argument("--out", default="out/")
-    args = parser.parse_args()
-    based = Path(args.ind); outd = Path(args.out)
+    args = parser.parse_args(); based = Path(args.ind); outd = Path(args.out)
     dirs = []
     for run_path in based.glob("run-*"):
         d = Dir(src=run_path)
@@ -258,7 +218,6 @@ if __name__ == "__main__":
             f = File(src=d, path=file_path, text=text)
             d.files.append(f)
         dirs.append(d)
-
     highlevel_results = []
     linter_results = []
     print("\nAnalyzing code files...")
